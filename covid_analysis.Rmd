@@ -1,0 +1,146 @@
+---
+title: "Comparative Analaysis of Covid Cases Between Three Urban Populations"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+In this notebook, I've reviewed COVID-19 cases over time in two counties containing cities. I wanted to see if the COVID-19 cases tended to follow the same trend between a large urban area (Cook County, Illinois, which Chicago is located in) and a smaller urban area (Onondaga County, New York, which Syracuse is located in).
+
+Then, using that data to contruct a model, I wanted to see if a model based on these two urban counties could be applied to a third urban county (San Francisco County, California) as a way to estimate COVID-19 behavior.
+
+
+
+# Import Libraries and Data
+
+## Import Libraries
+
+Import the following libraries: *tidyverse*: Cleaning and plotting *lubridate*: Date transformation
+
+```{r, include=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+## Import and Clean Data
+
+U.S. COVID-19 case time series data is retrieved from <https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/>
+
+Population data as of the 2020 census was retrieved from the following sources:
+
+<https://www.census.gov/quickfacts/fact/table/cookcountyillinois/PST045221>
+<https://www.census.gov/quickfacts/onondagacountynewyork>
+<https://www.census.gov/quickfacts/sanfranciscocountycalifornia>
+
+
+```{r}
+url_in = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names = c("time_series_covid19_confirmed_global.csv","time_series_covid19_deaths_global.csv","time_series_covid19_confirmed_US.csv","time_series_covid19_deaths_US.csv")
+urls = str_c(url_in,file_names)
+
+us_cases = read_csv(urls[3])
+
+cook_population = 5275541
+onondaga_population = 476516
+sanfransisco_population = 873965
+```
+
+```{r}
+cook_cases = us_cases[us_cases$Admin2 == 'Cook' & us_cases$Province_State == 'Illinois',]
+onondaga_cases = us_cases[us_cases$Admin2 == 'Onondaga' & us_cases$Province_State == 'New York',]
+
+cook_cases = cook_cases %>% pivot_longer(cols=-c("UID","iso2","iso3","code3","FIPS","Admin2","Province_State","Country_Region","Lat","Long_","Combined_Key"),
+                                       names_to="date",
+                                       values_to="cases"
+                                       ) %>% mutate(date=mdy(date))
+onondaga_cases = onondaga_cases %>% pivot_longer(cols=-c("UID","iso2","iso3","code3","FIPS","Admin2","Province_State","Country_Region","Lat","Long_","Combined_Key"),
+                                       names_to="date",
+                                       values_to="cases"
+                                       ) %>% mutate(date=mdy(date))
+
+cook_cases$per_thous = cook_cases$cases / (cook_population / 1000)
+onondaga_cases$per_thous = onondaga_cases$cases / (onondaga_population / 1000)
+
+cook_onondaga_cases = merge(cook_cases,onondaga_cases,by="date")
+cook_onondaga_cases$average = (cook_onondaga_cases$per_thous.x + cook_onondaga_cases$per_thous.y) / 2
+```
+
+\newpage
+
+# Data Exploration
+
+Below is some preliminary exploration of the case data:
+
+## Cook County Cases Over Time
+
+```{r}
+ggplot() + geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$per_thous.x), color="blue") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("Cases per Thousand") + xlab("Date")
+```
+
+\newpage
+
+## Onondaga County Cases Over Time
+
+```{r}
+ggplot() + geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$per_thous.y), color="purple") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("Cases per Thousand") + xlab("Date")
+```
+
+\newpage
+
+## Cook and Onondaga County Cases Over Time, Compared
+
+Cook County is plotted in blue, while Onondaga County is plotted in purple.  Cases are plotted per thousand people, in order to compare the two counties equally.
+
+```{r}
+ggplot() + geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$per_thous.x), color="blue") + geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$per_thous.y), color="purple") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ylab("Cases per Thousand") + xlab("Date")
+```
+
+\newpage
+
+# Modelling and Analysis
+
+Using the average of the cases per day in both Cook and Onondaga Counties, I constructed a model of COVID-19 cases per day.
+
+As can be seen, both counties follow a very similar pattern, and over time become almost identical. It is very interesting that, for cities with very different populations and in very different areas of the country, that the COVID-19 case behavior is very similar.  This leads to a question: Can we use a model generated from these two counties to predict the behavior of a third?
+
+Cook County is plotted in blue, Onondaga County is plotted in purple, and the model predictions are plotted in yellow.
+
+```{r}
+library(splines)
+model <- lm(average ~ ns(date, 15), data = cook_onondaga_cases)
+
+cook_onondaga_cases = cook_onondaga_cases %>% mutate(combinedpred=predict(model))
+
+ggplot() + geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$per_thous.x), color="blue") + geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$per_thous.y), color="purple")+ geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$combinedpred), color="yellow") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_y_log10() + ylab("Cases per Thousand (Log Scale)") + xlab("Date")
+```
+
+\newpage
+
+# Predicting Cases in San Francisco County
+
+I selected San Francisco County as a third county that I wanted to see if I could predict cases for based on the model achieved from Cook and Onondaga Counties.
+
+Below, I've plotted the San Fransisco cases in red and the model predictions in yellow.
+
+As is evident, while the model does closely follow the same shape as the actual San Fransisco data, the actual data tends lower than the model's predictions.
+
+```{r}
+sanfransisco_cases = us_cases[us_cases$Admin2 == 'San Francisco' & us_cases$Province_State == 'California',]
+sanfransisco_cases = sanfransisco_cases %>% pivot_longer(cols=-c("UID","iso2","iso3","code3","FIPS","Admin2","Province_State","Country_Region","Lat","Long_","Combined_Key"),
+                                       names_to="date",
+                                       values_to="cases"
+                                       ) %>% mutate(date=mdy(date))
+sanfransisco_cases$per_thous = sanfransisco_cases$cases / (sanfransisco_population / 1000)
+```
+
+```{r}
+ggplot() + geom_point(aes(x=sanfransisco_cases$date, y=sanfransisco_cases$per_thous), color="red") + geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$combinedpred), color="yellow") + geom_point(aes(x=cook_onondaga_cases$date, y=cook_onondaga_cases$combinedpred), color="yellow") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + scale_y_log10() + ylab("Cases per Thousand (Log Scale)") + xlab("Date")
+```
+
+\newpage
+
+# Bias and Future Analysis
+
+Bias sources for this analysis may be personal (I've lived in both Chicago and Syracuse), and so have a personal connection to this data, however I don't have strong feelings about my results in this case.
+
+Differences in governmental policies and social norms (mask mandates, vaccine rolleout, vaccine adoption, etc) in all three areas may hvae an impact on these results.  I've also chosen three areas that were very proactive in terms of COVID-19 containment policies.  I suspect that further analysis with other areas of the country may produce different results. For example, counties that did not adopt mask mandate policies or that have low social acceptance of those policies may follow different models than those produced above.
